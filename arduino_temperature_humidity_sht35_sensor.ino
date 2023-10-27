@@ -87,10 +87,10 @@ const int ledpin      = 13;
 
 volatile bool wdtTriggered = false;
 
-volatile float lastTemperature = 99.0;
+volatile float lastTemperature = 9999.0;
 volatile int skippedTemperature = 0;
 
-volatile float lastHumidity = 99.0;
+volatile float lastHumidity = 9999.0;
 volatile int skippedHumidity = 0;
 
 SHT35 sht;
@@ -120,7 +120,7 @@ void loop()
 
    // handle temperature
   float currentTemperature = round( sht.getTemperature() * 10 ) / 10.0; // Read temperature
-  if( abs( currentTemperature - lastTemperature ) >= 0.1 || skippedTemperature > 10)
+  if( abs( currentTemperature - lastTemperature ) >= 0.1 || skippedTemperature > 15)
   {
     #ifndef DEBUG  
       knx.groupWrite2ByteFloat(groupTemperatureAddress, currentTemperature); // Send knx message
@@ -137,7 +137,7 @@ void loop()
 
   // handle humidity
   float currentHumidity = round( sht.getHumidity() ); // Read humidity  
-  if( abs( currentHumidity - lastHumidity ) >= 1 || skippedHumidity > 10 )
+  if( abs( currentHumidity - lastHumidity ) >= 1 || skippedHumidity > 15 )
   {
     #ifndef DEBUG
       knx.groupWrite2ByteFloat(groupHumidityAddress, currentHumidity); // Send knx message
