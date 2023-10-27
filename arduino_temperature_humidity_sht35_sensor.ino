@@ -4,8 +4,9 @@
 #include <avr/wdt.h>
 #include <avr/power.h>
 
-#include <KnxTpUart.h>
-#include <SHT85.h>
+// successor, but not used => https://github.com/KONNEKTING/KonnektingDeviceLibrary
+#include <KnxTpUart.h> // https://github.com/thorsten-gehrig/arduino-tpuart-knx-user-forum
+#include <SHT85.h> // https://github.com/RobTillaart/SHT85 
 
 // FF Livingroom
 //const String knxAddress              = "1.1.49";
@@ -69,44 +70,42 @@ const String knxAddress              = "1.1.211";
 const String groupTemperatureAddress = "2/2/0";
 const String groupHumidityAddress    = "2/2/1";
 
-#define DEBUG
-#define SHT35_ADDRESS         0x44
-#define PIN_I2C_SDA A4
-#define PIN_I2C_SCL A5
-
-const int ledpin = 13;
-
-volatile bool wdtTriggered;
-
-SHT35 sht;
-
-KnxTpUart knx(&Serial, knxAddress);
-
+//#define DEBUG
 #ifdef DEBUG
   #define DEBUG_PRINTLN(x) Serial.println(x)
   #define DEBUG_FLUSH() Serial.flush()
 #else
   #define DEBUG_PRINTLN(x)
   #define DEBUG_FLUSH()
-
 #endif
+
+#define SHT35_ADDRESS   0x44
+#define PIN_I2C_SDA     A4
+#define PIN_I2C_SCL     A5
+
+const int ledpin      = 13;
+
+volatile bool wdtTriggered = false;
+
+volatile float lastTemperature = 99.0;
+volatile int skippedTemperature = 0;
+
+volatile float lastHumidity = 99.0;
+volatile int skippedHumidity = 0;
+
+SHT35 sht;
+
+KnxTpUart knx(&Serial, knxAddress);
 
 void setup()
 {
-  Serial.begin(115200);
-
-  // The following saves some extra power by disabling some peripherals I am not using.
-  ADCSRA &= ~(1 << ADEN); // Disable ADC, ADEN bit7 to 0
-
-  ACSR = B10000000; // Disable analog comparator, ACD bit7 to 1
-  DIDR0 = DIDR0 | B00111111; // Disable digitale inputbuffer, set analoge input pins 0-5 to 1
-  
-  //power_aca_disable()
-  power_adc_disable();
-
-  //Serial.begin(19200);
-  //UCSR0C = UCSR0C | B00100000; // Even Parity
-  //knx.uartReset();
+  #ifdef DEBUG  
+    Serial.begin(115200);
+  #else
+    Serial.begin(19200);
+    UCSR0C = UCSR0C | B00100000; // Even Parity
+    knx.uartReset();
+  #endif
 
   Wire.begin();
   sht.begin(SHT35_ADDRESS);
@@ -120,14 +119,38 @@ void loop()
   sht.read();
 
    // handle temperature
-  float temperature = sht.getTemperature(); // Read temperature
-  //knx.groupWrite2ByteFloat(groupTemperatureAddress, temperature); // Send knx message
-  DEBUG_PRINTLN(temperature);
+  float currentTemperature = round( sht.getTemperature() * 10 ) / 10.0; // Read temperature
+  if( abs( currentTemperature - lastTemperature ) >= 0.1 || skippedTemperature > 10)
+  {
+    #ifndef DEBUG  
+      knx.groupWrite2ByteFloat(groupTemperatureAddress, currentTemperature); // Send knx message
+    #endif
+    DEBUG_PRINTLN(currentTemperature);
+    lastTemperature = currentTemperature;
+    skippedTemperature = 0;
+  }
+  else
+  {
+    DEBUG_PRINTLN("No temperature change");
+    skippedTemperature += 1;
+  }
 
   // handle humidity
-  float humidity = sht.getHumidity(); // Read humidity  
-  //knx.groupWrite2ByteFloat(groupHumidityAddress, humidity); // Send knx message
-  DEBUG_PRINTLN(humidity);
+  float currentHumidity = round( sht.getHumidity() ); // Read humidity  
+  if( abs( currentHumidity - lastHumidity ) >= 1 || skippedHumidity > 10 )
+  {
+    #ifndef DEBUG
+      knx.groupWrite2ByteFloat(groupHumidityAddress, currentHumidity); // Send knx message
+    #endif
+    DEBUG_PRINTLN(currentHumidity);
+    lastHumidity = currentHumidity;
+    skippedHumidity = 0;
+  }
+  else
+  {
+    DEBUG_PRINTLN("No humidity change");
+    skippedHumidity += 1;
+  }
 
   // show Progress for 500 milliseconds
   showProgress( 500 );
@@ -150,10 +173,21 @@ void pwrDown(int seconds)
 
   const uint8_t WDTsave = WDTCSR;  
 
-  // force initial sleep mode reset
-  wdtTriggered = true;
+  wdtTriggered = true; // force initial sleep mode reset
 
-  power_twi_disable();
+  //ACSR = B10000000; // Disable analog comparator, ACD bit7 to 1
+  //DIDR0 = DIDR0 | B00111111; // Disable digitale inputbuffer, set analoge input pins 0-5 to 1
+  
+  ADCSRA &= ~(1 << ADEN);     // Ensure AD control register is disable before power disable
+  power_all_disable();
+  /*power_adc_disable();
+  power_spi_disable();
+  //power_timer0_disable();
+  power_timer1_disable();
+  power_timer2_disable();
+
+  power_usart0_disable();
+  power_twi_disable();*/
 
   for(int i=0; i < seconds; i++)
   {
@@ -187,7 +221,10 @@ void pwrDown(int seconds)
     sleep_disable();            // Clear the SE (sleep enable) bit.
   }
 
-  power_twi_enable();
+  //power_usart0_enable();
+  //power_twi_enable();
+  power_all_enable();
+  ADCSRA |= (1 << ADEN); // enable ADC
 
   cli();
   WDTCSR |= (1 << WDCE) | (1 << WDE); // Watchdog change enabled for the next 4 cpu cycles
